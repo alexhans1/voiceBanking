@@ -15,7 +15,8 @@ process.env.DEBUG = 'actions-on-google:*';
 const Actions = {
 	UNRECOGNIZED_DEEP_LINK: 'deeplink.unknown',
 	TELL_ACCOUNT_BALANCE: 'tell.account_balance',
-	TELL_SPENDING: 'tell.spending'
+	TELL_SPENDING: 'tell.spending',
+	RESPOND_TO_SEPA_REQUEST: 'respond.sepa_request'
 };
 
 let _ = require('lodash');
@@ -24,7 +25,7 @@ let moment = require('moment');
 let request = require('request-promise');
 
 let DEF_MODE = true;
-let LIVE = false;
+let LIVE = true;
 
 
 let usedURL = 'https://sandbox.finapi.io';
@@ -44,6 +45,7 @@ let CONNECTION_ID;
 let TRANSACTIONS;
 let SPENDING_AMOUNT;
 let ACCOUNTS;
+let SEPACHALLANGEMESSAGE;
 
 // INPUTS FROM API.AI
 let SEARCH_START_DATE = null;
@@ -71,7 +73,10 @@ const tellAccountBalance = app => {
 
 	setTimeout(() => {
 		let balance = ACCOUNTS[0].balance;
-		return app.tell('Hi, you have ' + balance + ' Euro on your bank account.');
+		return app.tell({
+			speech: 'Hi, you have ' + balance + ' Euro on your bank account.',
+			displayText: 'Hi, you have ' + balance + ' € on your bank account.'
+		});
 	}, 1000);
 };
 
@@ -87,30 +92,51 @@ const tellSpending = app => {
 	searchBankTransactions(USER_TOKEN);
 
 	setTimeout(() => {
-		return app.tell('You spent ' + SPENDING_AMOUNT + ' Euro in the given time period.');
+		return app.tell({
+			speech: 'You spent ' + SPENDING_AMOUNT + ' Euro in the given time period.',
+			displayText: 'You spent ' + SPENDING_AMOUNT + ' € in the given time period.'
+		});
 	}, 1000);
 };
 
 const respondToSepaRequest = app => {
 
+	 let userTokenInterval = setInterval(() => {
+		if (USER_TOKEN) {
+			getAllAccounts(USER_TOKEN);
+		}
+		clearInterval(userTokenInterval);
+	}, 500);
+
 	// get parameters
-	const recipientName = app.getArgument('sepa.recipientName'),
-		amount = app.getArgument('sepa.amount'),
-		purpose = app.getArgument('sepa.purpose');
+	const recipientName = app.getArgument('given-name'),
+		amount = app.getArgument('unit-currency'),
+		purpose = app.getArgument('any');
 
-	let response = requestSEPAMoneyTransfer(
-		USER_TOKEN,
-		recipientName,
-		ibans[recipientName],
-		amount,
-		purpose,
-		ACCOUNTS[0].id,
-		'921'
-	);
+	// check if they are sending Euros
+	if (amount.currency !== 'EUR') return app.tell('At the moment money can only be transferred in Euros.');
 
-	setTimeout(() => {
-		return app.tell('You spent ' + SPENDING_AMOUNT + ' Euro in the given time period.');
-	}, 1000);
+	let accountInterval = setInterval(() => {
+		if (ACCOUNTS) {
+			requestSEPAMoneyTransfer(
+				USER_TOKEN,
+				recipientName,
+				ibans[recipientName.toLocaleLowerCase()],
+				amount.amount,
+				purpose,
+				ACCOUNTS[0].id,
+				'921'
+			);
+			clearInterval(accountInterval);
+		}
+	}, 500);
+
+	let sepaInterval = setInterval(() => {
+		if (SEPACHALLANGEMESSAGE) {
+			clearInterval(sepaInterval);
+			return app.tell(SEPACHALLANGEMESSAGE);
+		}
+	}, 500);
 };
 
 
@@ -517,7 +543,9 @@ const requestSEPAMoneyTransfer = (
 		request(requestSEPAMoneyTransferOptions)
 		.then(function (parsedBody) {
 
-			if (DEF_MODE) console.log('SEPA REQUEST', parsedBody);
+			SEPACHALLANGEMESSAGE = parsedBody.challengeMessage;
+
+			if (DEF_MODE) console.log('SEPA REQUEST', parsedBody.successMessage);
 		})
 		.catch(function (err) {
 			console.error("$$$ Error while requesting SEPA Money Transfer.");
@@ -557,7 +585,7 @@ const init = functions.https.onRequest((request, response) => {
 
 	setTimeout(() => {
 		app.handleRequest(actionMap);
-	}, 1000)
+	}, 2000)
 
 });
 
@@ -568,6 +596,10 @@ module.exports = {
 if (!LIVE) {
 	authenticateClient();
 	setTimeout(() => {
-		requestSEPAMoneyTransfer(USER_TOKEN, 'papa', ibans['papa'], 0.01, 'test', ACCOUNTS[0].id, '921');
+		getAllAccounts(USER_TOKEN);
 	}, 1000);
+
+	setTimeout(() => {
+		requestSEPAMoneyTransfer(USER_TOKEN, 'papa', ibans['dad'], 0.01, 'test', ACCOUNTS[0].id, '921');
+	}, 2000);
 };
